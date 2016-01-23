@@ -1,0 +1,10 @@
+[package]
+authors = ["Antti Keränen <detegr@gmail.com>"]
+name = "tiling-curses"
+version = "0.1.0"
+
+[dependencies]
+ncurses = "5.80.0"
+
+[dependencies.rctree]
+path = "../rust-forest/rctree"
