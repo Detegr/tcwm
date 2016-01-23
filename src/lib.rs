@@ -3,10 +3,8 @@ extern crate rctree;
 
 use ncurses::*;
 use std::cell::RefCell;
-use std::rc::Rc;
-use std::collections::HashMap;
 
-pub type WindowRef = RefCell<Curses>;
+type WindowRef = RefCell<Curses>;
 
 pub struct WindowContainer {
     payload: Vec<WindowPayload>,
@@ -16,7 +14,7 @@ pub struct WindowContainer {
     focus: Option<usize>,
     root: bool, // TODO: This is an ugly hack
 }
-enum WindowSplitDirection {
+pub enum WindowSplitDirection {
     Horizontal,
     Vertical,
 }
@@ -28,7 +26,7 @@ pub enum Direction {
 }
 enum WindowPayload {
     Window(WindowRef),
-    Container(WindowContainer),
+    _Container(WindowContainer),
 }
 impl WindowContainer {
     pub fn new() -> WindowContainer {
@@ -78,9 +76,20 @@ impl WindowContainer {
             }
         }
     }
+    pub fn set_split_direction(&mut self, direction: WindowSplitDirection) {
+        self.direction = direction;
+    }
     pub fn split(&mut self) {
+        match self.direction {
+            WindowSplitDirection::Vertical => self.split_vertical(),
+            WindowSplitDirection::Horizontal => self.split_horizontal(),
+        }
+        self.refresh_windows(true);
+    }
+    fn split_vertical(&mut self) {
         let window_count = self.payload.len() as i32 + 1;
         let window_width = self.width / window_count;
+        let rounding_error = self.width % window_width;
         if window_width < 20 {
             return;
         }
@@ -91,38 +100,64 @@ impl WindowContainer {
                     w.cursor = RefCell::new((0, 0));
                     w.xmax = window_width;
                     w.x = i as i32 * window_width;
-                    wclear(w.win);
-                    if let Some(bwin) = w.border_win {
-                        wresize(w.win, w.ymax-1, w.xmax-1);
-                        wresize(w.header_win, 1, w.xmax);
-                        mvwin(bwin, w.y, w.x);
-                        mvwin(w.header_win, w.ymax-1, w.x);
-                        mvwin(w.win, w.y, w.x+1);
-                    } else {
-                        wresize(w.win, w.ymax-1, w.xmax);
-                        wresize(w.header_win, 1, w.xmax);
-                        mvwin(w.header_win, w.ymax-1, w.x);
-                        mvwin(w.win, w.y, w.x);
-                    }
+                    WindowContainer::reresize_window(&mut *w);
                 }
                 _ => {}
             }
         }
         let new_window_x = self.payload.len() as i32 * window_width;
-        let mut split = Curses::new_window(new_window_x, 0, (window_width, self.height), true);
+        let split = Curses::new_window(new_window_x, 0 /* todo */, (window_width + rounding_error, self.height), true);
         if let Some(focus_index) = self.focus {
             self.focus = Some(focus_index + 1)
         }
         self.payload.push(WindowPayload::Window(RefCell::new(split)));
-
-        self.refresh_windows(true);
+    }
+    fn split_horizontal(&mut self) {
+        let window_count = self.payload.len() as i32 + 1;
+        let window_height = self.height / window_count;
+        let rounding_error = self.height % window_height;
+        if window_height < 5 {
+            return;
+        }
+        for (i, window) in self.payload.iter().enumerate() {
+            match window {
+                &WindowPayload::Window(ref w) => {
+                    let mut w = w.borrow_mut();
+                    w.cursor = RefCell::new((0, 0));
+                    w.ymax = window_height;
+                    w.y = i as i32 * window_height;
+                    WindowContainer::reresize_window(&mut *w);
+                }
+                _ => {}
+            }
+        }
+        let new_window_y = self.payload.len() as i32 * window_height;
+        let mut split = Curses::new_window(0 /* todo */, new_window_y, (self.width, window_height + rounding_error), false);
+        if let Some(focus_index) = self.focus {
+            self.focus = Some(focus_index + 1);
+        }
+        self.payload.push(WindowPayload::Window(RefCell::new(split)));
+    }
+    fn reresize_window(w: &mut Curses) {
+        wclear(w.win);
+        if let Some(bwin) = w.border_win {
+            wresize(w.win, w.ymax - 1, w.xmax - 1);
+            wresize(w.header_win, 1, w.xmax);
+            mvwin(bwin, w.y, w.x);
+            mvwin(w.header_win, w.y + w.ymax - 1, w.x);
+            mvwin(w.win, w.y, w.x + 1);
+        } else {
+            wresize(w.win, w.ymax - 1, w.xmax);
+            wresize(w.header_win, 1, w.xmax);
+            mvwin(w.header_win, w.y + w.ymax - 1, w.x);
+            mvwin(w.win, w.y, w.x);
+        }
     }
     fn refresh_windows(&mut self, reprint: bool) {
         for (i, window) in self.payload.iter().enumerate() {
             match window {
                 &WindowPayload::Window(ref w) => {
                     let mut w = w.borrow_mut();
-                    let wx = w.x;
 
                     let header_color = {
                         let focused = self.focus.map_or(false, |fi| fi == i);
@@ -130,6 +165,7 @@ impl WindowContainer {
                         COLOR_PAIR(color.into())
                     };
                     wbkgd(w.header_win, header_color);
+                    w.header = format!("Window {} ({}, {}) ({}, {})", i, w.x, w.y, w.xmax, w.ymax);
                     w.print_header();
                     if let Some(bwin) = w.border_win {
                         mvwvline(bwin, 0, 0, ACS_HLINE(), 1000);
@@ -177,7 +213,7 @@ impl Into<i16> for Color {
     }
 }
 
-pub struct Curses {
+struct Curses {
 	win: WINDOW,
     border_win: Option<WINDOW>,
     header_win: WINDOW,
@@ -190,13 +226,11 @@ pub struct Curses {
     header: String,
 }
 impl Curses {
-    fn new_window(mut x: i32, mut y: i32, dimensions: (i32, i32), border: bool) -> Curses {
-        let mut xmax = 0;
-        let mut ymax = 0;
+    fn new_window(x: i32, y: i32, dimensions: (i32, i32), border: bool) -> Curses {
         let (xmax, ymax) = dimensions;
         let bwin = if border { Some(newwin(ymax, 1, y, x)) } else { None };
 		let win = if border { newwin(ymax-1, xmax, y, x+1) } else { newwin(ymax-1, xmax, y, x) };
-        let hwin = newwin(1, xmax, ymax-1, x);
+        let hwin = newwin(1, xmax, y + ymax - 1, x);
         wbkgd(hwin, COLOR_PAIR(Color::StatusSelected.into()));
         Curses {
             win: win,
@@ -230,9 +264,6 @@ impl Curses {
         let mut ymax = 0;
         getmaxyx(stdscr, &mut ymax, &mut xmax);
         Curses::new_window(0, 0, (xmax, ymax), false)
-    }
-    pub fn getch(&self) -> i32 {
-        wgetch(self.win)
     }
     fn reprint_buffer(&mut self) {
         for line in self.lines.iter() {
