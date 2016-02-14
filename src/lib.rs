@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::ops::{Deref, DerefMut};
 
-type WindowRef = RefCell<Curses>;
 type ContainerRef = Rc<RefCell<WindowContainer>>;
 
 pub struct WindowContainer {
@@ -30,7 +29,7 @@ pub enum Direction {
     Right,
 }
 enum WindowPayload {
-    Window(WindowRef),
+    Window(Curses),
     Container(ContainerRef),
 }
 impl WindowPayload {
@@ -40,9 +39,15 @@ impl WindowPayload {
             WindowPayload::Container(_) => true,
         }
     }
-    fn as_window(&self) -> &WindowRef {
+    fn as_window(&self) -> &Curses {
         match *self {
             WindowPayload::Window(ref wr) => wr,
+            _ => panic!("Not a window"),
+        }
+    }
+    fn as_window_mut(&mut self) -> &mut Curses {
+        match *self {
+            WindowPayload::Window(ref mut wr) => wr,
             _ => panic!("Not a window"),
         }
     }
@@ -51,11 +56,11 @@ impl WindowContainer {
     pub fn new() -> WindowContainer {
         WindowContainer::new_container(0, 0, None)
     }
-    fn new_container(x: i32, y: i32, window: Option<RefCell<Curses>>) -> WindowContainer {
+    fn new_container(x: i32, y: i32, window: Option<Curses>) -> WindowContainer {
         let is_root = window.is_none();
-        let win = window.unwrap_or(RefCell::new(Curses::new()));
-        let width = win.borrow().xmax;
-        let height = win.borrow().ymax;
+        let win = window.unwrap_or(Curses::new());
+        let width = win.xmax;
+        let height = win.ymax;
         let mut root = WindowContainer {
             payload: vec![WindowPayload::Window(win)],
             direction: WindowSplitDirection::Vertical,
@@ -90,7 +95,7 @@ impl WindowContainer {
         self.refresh_windows(true);
     }
     pub fn print(&mut self, s: &str) {
-        self.with_focused(|f| f.focused_window().borrow_mut().print(s))
+        self.with_focused(|f| f.focused_window().print(s))
     }
     pub fn set_split_direction(&mut self, direction: WindowSplitDirection) {
         if self.payload.len() == 1 {
@@ -101,8 +106,8 @@ impl WindowContainer {
         match win {
             WindowPayload::Container(_) => panic!("Splitting when container active NYI"),
             WindowPayload::Window(win) => {
-                let x = win.borrow().x;
-                let y = win.borrow().y;
+                let x = win.x;
+                let y = win.y;
                 let mut new = WindowContainer::new_container(x, y, Some(win));
                 new.direction = direction;
                 self.payload.push(WindowPayload::Container(Rc::new(RefCell::new(new))));
@@ -130,8 +135,8 @@ impl WindowContainer {
             None => f(self),
         }
     }
-    fn focused_window(&self) -> &WindowRef {
-        self.payload[self.focus].as_window()
+    fn focused_window(&mut self) -> &mut Curses {
+        self.payload[self.focus].as_window_mut()
     }
     fn focused_container(&self) -> Option<ContainerRef> {
         let ref win = self.payload[self.focus];
@@ -157,10 +162,10 @@ impl WindowContainer {
         if window_width < 20 {
             return;
         }
-        for (i, window) in self.payload.iter().enumerate() {
+        for (i, window) in self.payload.iter_mut().enumerate() {
             match window {
-                &WindowPayload::Window(ref w) => {
-                    let mut w = w.borrow_mut();
+                &mut WindowPayload::Window(ref mut w) => {
+                    //let mut w = w.borrow_mut();
                     w.cursor = RefCell::new((0, 0));
                     w.xmax = window_width;
                     w.x = self.container_x + (i as i32) * window_width;
@@ -172,7 +177,7 @@ impl WindowContainer {
         let new_window_x = self.container_x + (self.payload.len() as i32 * window_width);
         let split = Curses::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true);
         self.focus += 1;
-        self.payload.push(WindowPayload::Window(RefCell::new(split)));
+        self.payload.push(WindowPayload::Window(split));
     }
     fn split_horizontal(&mut self) {
         self.with_focused(WindowContainer::do_split_horizontal)
@@ -184,10 +189,10 @@ impl WindowContainer {
         if window_height < 5 {
             return;
         }
-        for (i, window) in self.payload.iter().enumerate() {
+        for (i, window) in self.payload.iter_mut().enumerate() {
             match window {
-                &WindowPayload::Window(ref w) => {
-                    let mut w = w.borrow_mut();
+                &mut WindowPayload::Window(ref mut w) => {
+                    //let mut w = w.borrow_mut();
                     w.cursor = RefCell::new((0, 0));
                     w.ymax = window_height;
                     w.y = self.container_y + (i as i32) * window_height;
@@ -199,7 +204,7 @@ impl WindowContainer {
         let new_window_y = self.container_y + (self.payload.len() as i32 * window_height);
         let split = Curses::new_window(self.container_x, new_window_y, (self.width, window_height + rounding_error), self.container_x > 0);
         self.focus += 1;
-        self.payload.push(WindowPayload::Window(RefCell::new(split)));
+        self.payload.push(WindowPayload::Window(split));
     }
     fn reresize_window(w: &mut Curses) {
         wclear(w.win);
@@ -217,11 +222,9 @@ impl WindowContainer {
         }
     }
     fn refresh_windows(&mut self, reprint: bool) {
-        for (i, window) in self.payload.iter().enumerate() {
+        for (i, window) in self.payload.iter_mut().enumerate() {
             match window {
-                &WindowPayload::Window(ref w) => {
-                    let mut w = w.borrow_mut();
-
+                &mut WindowPayload::Window(ref mut w) => {
                     let header_color = {
                         let focused = self.focus == i;
                         let color = if focused { Color::StatusSelected } else { Color::Status.into() };
@@ -242,7 +245,7 @@ impl WindowContainer {
                         w.reprint_buffer();
                     }
                 }
-                &WindowPayload::Container(ref c) => {
+                &mut WindowPayload::Container(ref c) => {
                     let mut c = c.borrow_mut();
                     c.refresh_windows(false);
                 }
@@ -251,9 +254,9 @@ impl WindowContainer {
     }
     pub fn set_header(&mut self, header: &str) {
         self.with_focused(|w| {
-            let w = w.payload[w.focus].as_window();
-            w.borrow_mut().header = header.to_owned();
-            w.borrow_mut().print_header();
+            let mut w = w.payload[w.focus].as_window_mut();
+            w.header = header.to_owned();
+            w.print_header();
         })
     }
 }
