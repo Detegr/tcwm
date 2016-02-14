@@ -95,7 +95,7 @@ impl WindowContainer {
         self.refresh_windows(true);
     }
     pub fn print(&mut self, s: &str) {
-        self.with_focused(|f| f.focused_window().print(s))
+        self.with_focused_container(|f| f.focused_window().print(s))
     }
     pub fn set_split_direction(&mut self, direction: WindowSplitDirection) {
         if self.payload.len() == 1 {
@@ -115,7 +115,7 @@ impl WindowContainer {
         }
     }
     pub fn split(&mut self) {
-        self.with_focused(|f| {
+        self.with_focused_container(|f| {
             let direction = f.direction;
             f.do_split(direction);
         });
@@ -127,7 +127,7 @@ impl WindowContainer {
             WindowSplitDirection::Horizontal => self.split_horizontal(),
         }
     }
-    fn with_focused<F>(&mut self, f: F)
+    fn with_focused_container<F>(&mut self, f: F)
         where F: Fn(&mut WindowContainer)
     {
         match self.focused_container() {
@@ -153,7 +153,7 @@ impl WindowContainer {
         }
     }
     fn split_vertical(&mut self) {
-        self.with_focused(WindowContainer::do_split_vertical)
+        self.with_focused_container(WindowContainer::do_split_vertical)
     }
     fn do_split_vertical(&mut self) {
         let window_count = self.payload.len() as i32 + 1;
@@ -180,7 +180,7 @@ impl WindowContainer {
         self.payload.push(WindowPayload::Window(split));
     }
     fn split_horizontal(&mut self) {
-        self.with_focused(WindowContainer::do_split_horizontal)
+        self.with_focused_container(WindowContainer::do_split_horizontal)
     }
     fn do_split_horizontal(&mut self) {
         let window_count = self.payload.len() as i32 + 1;
@@ -253,7 +253,7 @@ impl WindowContainer {
         }
     }
     pub fn set_header(&mut self, header: &str) {
-        self.with_focused(|w| {
+        self.with_focused_container(|w| {
             let mut w = w.payload[w.focus].as_window_mut();
             w.header = header.to_owned();
             w.print_header();
