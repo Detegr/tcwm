@@ -243,11 +243,13 @@ impl WindowContainer {
                     }
                     if reprint {
                         w.reprint_buffer();
+                    } else {
+                        wrefresh(w.win);
                     }
                 }
                 &mut WindowPayload::Container(ref c) => {
                     let mut c = c.borrow_mut();
-                    c.refresh_windows(false);
+                    c.refresh_windows(reprint);
                 }
             }
         }
