@@ -17,10 +17,6 @@ pub struct WindowContainer {
     root: bool, // TODO: This is an ugly hack
 }
 #[derive(Copy, Clone, PartialEq)]
-pub enum WindowSplitDirection {
-    Horizontal,
-    Vertical,
-}
 pub enum Direction {
     Up,
     Down,
@@ -28,7 +24,7 @@ pub enum Direction {
     Right,
 }
 enum WindowPayload {
-    Window(Curses),
+    Window(Window),
     Container(ContainerRef),
 }
 impl WindowPayload {
@@ -38,7 +34,7 @@ impl WindowPayload {
             WindowPayload::Container(_) => true,
         }
     }
-    fn as_window_mut(&mut self) -> &mut Curses {
+    fn as_window_mut(&mut self) -> &mut Window {
         match *self {
             WindowPayload::Window(ref mut wr) => wr,
             _ => panic!("Not a window"),
@@ -49,9 +45,9 @@ impl WindowContainer {
     pub fn new() -> WindowContainer {
         WindowContainer::new_container(0, 0, None)
     }
-    fn new_container(x: i32, y: i32, window: Option<Curses>) -> WindowContainer {
+    fn new_container(x: i32, y: i32, window: Option<Window>) -> WindowContainer {
         let is_root = window.is_none();
-        let win = window.unwrap_or(Curses::new());
+        let win = window.unwrap_or(Window::new());
         let width = win.xmax;
         let height = win.ymax;
         let mut root = WindowContainer {
@@ -132,7 +128,7 @@ impl WindowContainer {
             None => f(self),
         }
     }
-    fn focused_window(&mut self) -> &mut Curses {
+    fn focused_window(&mut self) -> &mut Window {
         self.payload[self.focus].as_window_mut()
     }
     fn focused_container(&self) -> Option<ContainerRef> {
@@ -172,7 +168,7 @@ impl WindowContainer {
             }
         }
         let new_window_x = self.container_x + (self.payload.len() as i32 * window_width);
-        let split = Curses::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true);
+        let split = Window::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true);
         self.focus += 1;
         self.payload.push(WindowPayload::Window(split));
     }
@@ -199,11 +195,11 @@ impl WindowContainer {
             }
         }
         let new_window_y = self.container_y + (self.payload.len() as i32 * window_height);
-        let split = Curses::new_window(self.container_x, new_window_y, (self.width, window_height + rounding_error), self.container_x > 0);
+        let split = Window::new_window(self.container_x, new_window_y, (self.width, window_height + rounding_error), self.container_x > 0);
         self.focus += 1;
         self.payload.push(WindowPayload::Window(split));
     }
-    fn reresize_window(w: &mut Curses) {
+    fn reresize_window(w: &mut Window) {
         wclear(w.win);
         if let Some(bwin) = w.border_win {
             wresize(w.win, w.ymax - 1, w.xmax - 1);
@@ -271,7 +267,8 @@ pub enum CursesError {
     CursesAlreadyInitialized,
 }
 
-pub enum CursesSplitDirection {
+#[derive(Copy, Clone, PartialEq)]
+pub enum WindowSplitDirection {
     Horizontal,
     Vertical,
 }
@@ -292,8 +289,8 @@ impl Into<i16> for Color {
     }
 }
 
-struct Curses {
-	win: WINDOW,
+struct Window {
+    win: WINDOW,
     border_win: Option<WINDOW>,
     header_win: WINDOW,
     x: i32,
@@ -304,14 +301,14 @@ struct Curses {
     lines: Vec<String>,
     header: String,
 }
-impl Curses {
-    fn new_window(x: i32, y: i32, dimensions: (i32, i32), border: bool) -> Curses {
+impl Window {
+    fn new_window(x: i32, y: i32, dimensions: (i32, i32), border: bool) -> Window {
         let (xmax, ymax) = dimensions;
         let bwin = if border { Some(newwin(ymax, 1, y, x)) } else { None };
-		let win = if border { newwin(ymax-1, xmax, y, x+1) } else { newwin(ymax-1, xmax, y, x) };
+        let win = if border { newwin(ymax-1, xmax, y, x+1) } else { newwin(ymax-1, xmax, y, x) };
         let hwin = newwin(1, xmax, y + ymax - 1, x);
         wbkgd(hwin, COLOR_PAIR(Color::StatusSelected.into()));
-        Curses {
+        Window {
             win: win,
             border_win: bwin,
             header_win: hwin,
@@ -324,7 +321,7 @@ impl Curses {
             header: "New window".into(),
         }
     }
-    fn new() -> Curses {
+    fn new() -> Window {
         initscr();
         if !has_colors() {
             panic!("No colors");
@@ -342,7 +339,7 @@ impl Curses {
         let mut xmax = 0;
         let mut ymax = 0;
         getmaxyx(stdscr, &mut ymax, &mut xmax);
-        Curses::new_window(0, 0, (xmax, ymax), false)
+        Window::new_window(0, 0, (xmax, ymax), false)
     }
     fn reprint_buffer(&mut self) {
         for line in self.lines.iter() {
@@ -370,7 +367,7 @@ impl Curses {
         wrefresh(self.win);
     }
 }
-impl Drop for Curses {
+impl Drop for Window {
     fn drop(&mut self) {
         delwin(self.win);
         if let Some(bwin) = self.border_win {
