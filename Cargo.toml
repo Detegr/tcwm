@@ -1,6 +1,6 @@
 [package]
 authors = ["Antti Keränen <detegr@gmail.com>"]
-name = "tiling-curses"
+name = "tcwm"
 version = "0.1.0"
 
 [dependencies]
