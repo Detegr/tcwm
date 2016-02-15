@@ -102,16 +102,20 @@ impl WindowContainer {
             self.direction = direction;
             return
         }
+        if let WindowPayload::Container(ref container) = self.payload[self.focus] {
+            container.borrow_mut().set_split_direction(direction);
+            return;
+        }
         let win = self.payload.remove(self.focus);
         match win {
-            WindowPayload::Container(_) => panic!("Splitting when container active NYI"),
             WindowPayload::Window(win) => {
                 let x = win.x;
                 let y = win.y;
                 let mut new = WindowContainer::new_container(x, y, Some(win));
                 new.direction = direction;
-                self.payload.push(WindowPayload::Container(Rc::new(RefCell::new(new))));
+                self.payload.insert(self.focus, WindowPayload::Container(Rc::new(RefCell::new(new))));
             }
+            _ => unreachable!()
         }
     }
     pub fn split(&mut self) {
