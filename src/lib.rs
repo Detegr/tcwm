@@ -3,7 +3,6 @@ extern crate ncurses;
 use ncurses::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::ops::{Deref, DerefMut};
 
 type ContainerRef = Rc<RefCell<WindowContainer>>;
 
@@ -37,12 +36,6 @@ impl WindowPayload {
         match *self {
             WindowPayload::Window(_) => false,
             WindowPayload::Container(_) => true,
-        }
-    }
-    fn as_window(&self) -> &Curses {
-        match *self {
-            WindowPayload::Window(ref wr) => wr,
-            _ => panic!("Not a window"),
         }
     }
     fn as_window_mut(&mut self) -> &mut Curses {
