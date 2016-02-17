@@ -1,7 +1,7 @@
 extern crate ncurses;
 
 use ncurses::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 type ContainerRef = Rc<RefCell<WindowContainer>>;
@@ -159,7 +159,7 @@ impl WindowContainer {
             match window {
                 &mut WindowPayload::Window(ref mut w) => {
                     //let mut w = w.borrow_mut();
-                    w.cursor = RefCell::new((0, 0));
+                    w.cursor.set((0, 0));
                     w.xmax = window_width;
                     w.x = self.container_x + (i as i32) * window_width;
                     WindowContainer::reresize_window(&mut *w);
@@ -186,7 +186,7 @@ impl WindowContainer {
             match window {
                 &mut WindowPayload::Window(ref mut w) => {
                     //let mut w = w.borrow_mut();
-                    w.cursor = RefCell::new((0, 0));
+                    w.cursor.set((0, 0));
                     w.ymax = window_height;
                     w.y = self.container_y + (i as i32) * window_height;
                     WindowContainer::reresize_window(&mut *w);
@@ -297,7 +297,7 @@ struct Window {
     y: i32,
     xmax: i32,
     ymax: i32,
-    cursor: RefCell<(i32, i32)>,
+    cursor: Cell<(i32, i32)>,
     lines: Vec<String>,
     header: String,
 }
@@ -316,7 +316,7 @@ impl Window {
             y: y,
             xmax: xmax,
             ymax: ymax,
-            cursor: RefCell::new((0, 0)),
+            cursor: Cell::new((0, 0)),
             lines: vec![],
             header: "New window".into(),
         }
@@ -353,7 +353,7 @@ impl Window {
         wrefresh(self.header_win);
     }
     fn print_internal(&self, s: &str) {
-        let (ref mut x, ref mut y) = *self.cursor.borrow_mut();
+        let (ref mut x, ref mut y) = self.cursor.get();
         if *y >= self.ymax {
             // TODO: Scroll
             return;
