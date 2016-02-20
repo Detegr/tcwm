@@ -212,7 +212,6 @@ impl WindowContainer {
         for (i, window) in self.payload.iter_mut().enumerate() {
             match window {
                 &mut WindowPayload::Window(ref mut w) => {
-                    //let mut w = w.borrow_mut();
                     w.cursor.set((0, 0));
                     w.ymax = window_height;
                     w.y = self.container_y + (i as i32) * window_height;
@@ -242,11 +241,14 @@ impl WindowContainer {
         }
     }
     fn refresh_windows(&mut self, reprint: bool) {
+        self.refresh_windows_internal(reprint, true)
+    }
+    fn refresh_windows_internal(&mut self, reprint: bool, in_focus_chain: bool) {
         for (i, window) in self.payload.iter_mut().enumerate() {
             match window {
                 &mut WindowPayload::Window(ref mut w) => {
                     let header_color = {
-                        let focused = self.focus == i;
+                        let focused = in_focus_chain && self.focus == i;
                         let color = if focused { Color::StatusSelected } else { Color::Status.into() };
                         COLOR_PAIR(color.into())
                     };
@@ -269,7 +271,8 @@ impl WindowContainer {
                 }
                 &mut WindowPayload::Container(ref c) => {
                     let mut c = c.borrow_mut();
-                    c.refresh_windows(reprint);
+                    let in_focus_chain = in_focus_chain && self.focus == i;
+                    c.refresh_windows_internal(reprint, in_focus_chain);
                 }
             }
         }
