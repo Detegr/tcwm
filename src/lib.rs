@@ -353,13 +353,14 @@ impl Window {
         wrefresh(self.header_win);
     }
     fn print_internal(&self, s: &str) {
-        let (ref mut x, ref mut y) = self.cursor.get();
-        if *y >= self.ymax {
+        let (x, mut y) = self.cursor.get();
+        if y >= self.ymax {
             // TODO: Scroll
             return;
         }
-        mvwprintw(self.win, *y, *x, s);
-        *y += (s.len() as i32 / (self.xmax - 1)) + 1;
+        mvwprintw(self.win, y, x, s);
+        y += (s.len() as i32 / (self.xmax - 1)) + 1;
+        self.cursor.set((x, y));
     }
     pub fn print(&mut self, s: &str) {
         self.print_internal(s);
