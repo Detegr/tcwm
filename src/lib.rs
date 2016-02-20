@@ -34,6 +34,12 @@ impl WindowPayload {
             WindowPayload::Container(_) => true,
         }
     }
+    fn as_container(&self) -> ContainerRef {
+        match *self {
+            WindowPayload::Container(ref c) => c.clone(),
+            _ => panic!("Not a container"),
+        }
+    }
     fn as_window_mut(&mut self) -> &mut Window {
         match *self {
             WindowPayload::Window(ref mut wr) => wr,
@@ -64,24 +70,45 @@ impl WindowContainer {
         root
     }
     pub fn change_focus(&mut self, direction: Direction) {
-        match direction {
-            Direction::Left => {
-                if self.focus == 0 {
-                    self.focus = self.payload.len() - 1;
-                } else {
-                    self.focus -= 1;
+        let _ = self.change_focus_internal(direction);
+        self.refresh_windows(false);
+    }
+    fn change_focus_internal(&mut self, direction: Direction) -> Result<(), ()> {
+        if self.payload[self.focus].is_container() {
+            let c = self.payload[self.focus].as_container();
+            return match c.borrow_mut().change_focus_internal(direction) {
+                Err(_) => {
+                    self.do_focus_change(direction)
                 }
-            }
-            Direction::Right => {
-                if self.focus == self.payload.len() - 1 {
-                    self.focus = 0;
-                } else {
-                    self.focus += 1;
-                }
-            }
-            _ => panic!("Direction NYI")
+                Ok(_) => Ok(())
+            };
+        } else {
+            self.do_focus_change(direction)
         }
-        self.refresh_windows(true);
+    }
+    fn do_focus_change(&mut self, direction: Direction) -> Result<(), ()> {
+        match direction {
+            Direction::Left | Direction::Up => {
+                if self.direction.direction_ok(direction) {
+                    if self.focus == 0 {
+                        Err(())
+                    } else {
+                        self.focus -= 1;
+                        Ok(())
+                    }
+                } else { Err(()) }
+            }
+            Direction::Right | Direction::Down => {
+                if self.direction.direction_ok(direction) {
+                    if self.focus == self.payload.len() - 1 {
+                        Err(())
+                    } else {
+                        self.focus += 1;
+                        Ok(())
+                    }
+                } else { Err(()) }
+            }
+        }
     }
     pub fn print(&mut self, s: &str) {
         self.with_focused_container(|f| f.focused_window().print(s))
@@ -271,6 +298,20 @@ pub enum CursesError {
 pub enum WindowSplitDirection {
     Horizontal,
     Vertical,
+}
+impl WindowSplitDirection {
+    fn direction_ok(&self, dir: Direction) -> bool {
+        match *self {
+            WindowSplitDirection::Vertical => {
+                dir == Direction::Left
+                || dir == Direction::Right
+            }
+            WindowSplitDirection::Horizontal => {
+                dir == Direction::Up
+                || dir == Direction::Down
+            }
+        }
+    }
 }
 
 pub fn wait_for_key() -> i32 {
