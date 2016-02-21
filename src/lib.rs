@@ -139,7 +139,7 @@ impl WindowContainer {
             let direction = f.direction;
             f.do_split(direction);
         });
-        self.refresh_windows(false);
+        self.refresh_windows(true);
     }
     fn do_split(&mut self, direction: WindowSplitDirection) {
         match direction {
