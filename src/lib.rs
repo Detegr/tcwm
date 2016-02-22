@@ -1,7 +1,12 @@
 extern crate ncurses;
+extern crate libc;
 
 use ncurses::*;
+
+use libc::SIGWINCH;
+
 use std::cell::{Cell, RefCell};
+use std::mem::transmute;
 use std::rc::Rc;
 
 type ContainerRef = Rc<RefCell<WindowContainer>>;
@@ -317,6 +322,11 @@ impl WindowSplitDirection {
     }
 }
 
+fn window_resized() {
+    // TODO: Need to rethink initialization strategy
+    // because this function needs to access the root container
+}
+
 pub fn wait_for_key() -> i32 {
     ncurses::getch()
 }
@@ -366,6 +376,10 @@ impl Window {
         }
     }
     fn new() -> Window {
+        // TODO: This feels like a bad function to init ncurses in
+        // as this function must not be called more than once!
+        // Maybe take a look at std::sync::Once?
+
         initscr();
         if !has_colors() {
             panic!("No colors");
@@ -379,6 +393,10 @@ impl Window {
         init_pair(Color::Status.into(), COLOR_WHITE, COLOR_BLUE);
         init_pair(Color::StatusSelected.into(), COLOR_BLACK, COLOR_CYAN);
         init_pair(Color::Default.into(), COLOR_GREEN, COLOR_BLACK);
+
+        unsafe {
+            libc::signal(SIGWINCH, transmute(window_resized));
+        }
 
         let mut xmax = 0;
         let mut ymax = 0;

@@ -1,8 +1,9 @@
 [package]
 authors = ["Antti Keränen <detegr@gmail.com>"]
-name = "tcwm"
 license = "MIT/Apache-2.0"
+name = "tcwm"
 version = "0.1.0"
 
 [dependencies]
+libc = "0.2.4"
 ncurses = "5.80.0"
