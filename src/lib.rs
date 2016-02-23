@@ -1,13 +1,69 @@
 extern crate ncurses;
-extern crate libc;
 
 use ncurses::*;
 
-use libc::SIGWINCH;
-
 use std::cell::{Cell, RefCell};
 use std::mem::transmute;
+use std::mem;
+use std::ops::{Deref,DerefMut};
 use std::rc::Rc;
+use std::sync::{Once, ONCE_INIT};
+
+static INIT: Once = ONCE_INIT;
+static mut ROOT_CONTAINER: Option<*mut WindowContainer> = None;
+
+pub struct Tcwm;
+impl Tcwm {
+    pub fn new() -> Result<Tcwm, CursesError> {
+        let mut ret = Err(CursesError::CursesAlreadyInitialized);
+        INIT.call_once(|| {
+            initscr();
+            if !has_colors() {
+                panic!("No colors");
+            }
+            curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+            noecho();
+            refresh();
+            start_color();
+
+            init_pair(Color::Selection.into(), COLOR_GREEN, COLOR_BLACK);
+            init_pair(Color::Status.into(), COLOR_WHITE, COLOR_BLUE);
+            init_pair(Color::StatusSelected.into(), COLOR_BLACK, COLOR_CYAN);
+            init_pair(Color::Default.into(), COLOR_GREEN, COLOR_BLACK);
+
+            let root = Box::new(WindowContainer::new());
+            unsafe {
+                ROOT_CONTAINER = Some(Box::into_raw(root));
+            }
+            ret = Ok(Tcwm)
+        });
+        ret
+    }
+}
+impl Deref for Tcwm {
+    type Target = WindowContainer;
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            &*ROOT_CONTAINER.unwrap()
+        }
+    }
+}
+impl DerefMut for Tcwm {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            &mut *ROOT_CONTAINER.unwrap()
+        }
+    }
+}
+impl Drop for Tcwm {
+    fn drop(&mut self) {
+        endwin();
+        unsafe {
+            let root = Box::from_raw(ROOT_CONTAINER.unwrap());
+        }
+    }
+}
+
 
 type ContainerRef = Rc<RefCell<WindowContainer>>;
 
@@ -53,7 +109,7 @@ impl WindowPayload {
     }
 }
 impl WindowContainer {
-    pub fn new() -> WindowContainer {
+    fn new() -> WindowContainer {
         WindowContainer::new_container(0, 0, None)
     }
     fn new_container(x: i32, y: i32, window: Option<Window>) -> WindowContainer {
@@ -289,12 +345,9 @@ impl WindowContainer {
             w.print_header();
         })
     }
-}
-impl Drop for WindowContainer {
-    fn drop(&mut self) {
-        if self.root {
-            endwin();
-        }
+    fn on_resize(&mut self) {
+        // TODO
+        self.print("resized");
     }
 }
 
@@ -323,12 +376,17 @@ impl WindowSplitDirection {
 }
 
 fn window_resized() {
-    // TODO: Need to rethink initialization strategy
-    // because this function needs to access the root container
 }
 
 pub fn wait_for_key() -> i32 {
-    ncurses::getch()
+    let ret = ncurses::getch();
+    if ret == ncurses::KEY_RESIZE {
+        unsafe {
+            let ref mut rc = *ROOT_CONTAINER.unwrap();
+            rc.on_resize();
+        }
+    }
+    ret
 }
 
 enum Color {
@@ -379,24 +437,6 @@ impl Window {
         // TODO: This feels like a bad function to init ncurses in
         // as this function must not be called more than once!
         // Maybe take a look at std::sync::Once?
-
-        initscr();
-        if !has_colors() {
-            panic!("No colors");
-        }
-        curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
-        noecho();
-        refresh();
-        start_color();
-
-        init_pair(Color::Selection.into(), COLOR_GREEN, COLOR_BLACK);
-        init_pair(Color::Status.into(), COLOR_WHITE, COLOR_BLUE);
-        init_pair(Color::StatusSelected.into(), COLOR_BLACK, COLOR_CYAN);
-        init_pair(Color::Default.into(), COLOR_GREEN, COLOR_BLACK);
-
-        unsafe {
-            libc::signal(SIGWINCH, transmute(window_resized));
-        }
 
         let mut xmax = 0;
         let mut ymax = 0;
