@@ -428,10 +428,6 @@ impl Window {
         }
     }
     fn new() -> Window {
-        // TODO: This feels like a bad function to init ncurses in
-        // as this function must not be called more than once!
-        // Maybe take a look at std::sync::Once?
-
         let mut xmax = 0;
         let mut ymax = 0;
         getmaxyx(stdscr, &mut ymax, &mut xmax);
