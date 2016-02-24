@@ -3,8 +3,6 @@ extern crate ncurses;
 use ncurses::*;
 
 use std::cell::{Cell, RefCell};
-use std::mem::transmute;
-use std::mem;
 use std::ops::{Deref,DerefMut};
 use std::rc::Rc;
 use std::sync::{Once, ONCE_INIT};
@@ -60,6 +58,7 @@ impl Drop for Tcwm {
         endwin();
         unsafe {
             let root = Box::from_raw(ROOT_CONTAINER.unwrap());
+            drop(root);
         }
     }
 }
@@ -310,7 +309,7 @@ impl WindowContainer {
                 &mut WindowPayload::Window(ref mut w) => {
                     let header_color = {
                         let focused = in_focus_chain && self.focus == i;
-                        let color = if focused { Color::StatusSelected } else { Color::Status.into() };
+                        let color = if focused { Color::StatusSelected } else { Color::Status };
                         COLOR_PAIR(color.into())
                     };
                     wbkgd(w.header_win, header_color);
@@ -346,8 +345,6 @@ impl WindowContainer {
         })
     }
     fn on_resize(&mut self) {
-        // TODO
-        self.print("resized");
     }
 }
 
@@ -373,9 +370,6 @@ impl WindowSplitDirection {
             }
         }
     }
-}
-
-fn window_resized() {
 }
 
 pub fn wait_for_key() -> i32 {
