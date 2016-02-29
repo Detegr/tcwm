@@ -94,6 +94,9 @@ impl WindowPayload {
             WindowPayload::Container(_) => true,
         }
     }
+    fn is_window(&self) -> bool {
+        !self.is_container()
+    }
     fn as_container(&self) -> ContainerRef {
         match *self {
             WindowPayload::Container(ref c) => c.clone(),
@@ -196,19 +199,17 @@ impl WindowContainer {
     }
     pub fn split(&mut self) {
         self.with_focused_container(|f| {
-            let direction = f.direction;
-            f.do_split(direction);
+            let win = match f.direction {
+                WindowSplitDirection::Vertical => f.split_vertical(),
+                WindowSplitDirection::Horizontal => f.split_horizontal(),
+            };
+            f.focus += 1;
+            f.payload.push(WindowPayload::Window(win));
         });
         self.refresh_windows(true);
     }
-    fn do_split(&mut self, direction: WindowSplitDirection) {
-        match direction {
-            WindowSplitDirection::Vertical => self.split_vertical(),
-            WindowSplitDirection::Horizontal => self.split_horizontal(),
-        }
-    }
-    fn with_focused_container<F>(&mut self, f: F)
-        where F: Fn(&mut WindowContainer)
+    fn with_focused_container<F, T>(&mut self, f: F) -> T
+        where F: Fn(&mut WindowContainer) -> T
     {
         match self.focused_container() {
             Some(w) => f(&mut *w.borrow_mut()),
@@ -232,58 +233,50 @@ impl WindowContainer {
             &WindowPayload::Window(_) => None
         }
     }
-    fn split_vertical(&mut self) {
-        self.with_focused_container(WindowContainer::do_split_vertical)
+    fn calculate_dimensions(&self, window_count: Option<i32>) -> (i32, i32, i32) {
+        // TODO: Not sure if this function makes any sense
+        let window_count = window_count.unwrap_or(self.payload.len() as i32);
+        let (dim, pos) = match self.direction {
+            WindowSplitDirection::Horizontal => (self.height, self.container_y),
+            WindowSplitDirection::Vertical => (self.width, self.container_x),
+        };
+        let size = dim / window_count;
+        let rounding_error = dim % size;
+        (pos, size, rounding_error)
     }
-    fn do_split_vertical(&mut self) {
-        let window_count = self.payload.len() as i32 + 1;
-        let window_width = self.width / window_count;
-        let rounding_error = self.width % window_width;
-        if window_width < 20 {
-            return;
-        }
+    fn refresh_dimensions(&mut self, dimensions: (i32, i32, i32)) {
+        let (pos, size, _) = dimensions;
         for (i, window) in self.payload.iter_mut().enumerate() {
             match window {
                 &mut WindowPayload::Window(ref mut w) => {
-                    //let mut w = w.borrow_mut();
                     w.cursor.set((0, 0));
-                    w.xmax = window_width;
-                    w.x = self.container_x + (i as i32) * window_width;
+                    {
+                        let (mut wpos, mut wdim) = match self.direction {
+                            WindowSplitDirection::Horizontal => (&mut w.y, &mut w.ymax),
+                            WindowSplitDirection::Vertical => (&mut w.x, &mut w.xmax),
+                        };
+                        *wdim = size;
+                        *wpos = pos + (i as i32) * size;
+                    }
                     WindowContainer::reresize_window(&mut *w);
                 }
                 _ => {}
             }
         }
+    }
+    fn split_vertical(&mut self) -> Window {
+        let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1));
+        self.refresh_dimensions(dim);
+        let (_, window_width, rounding_error) = dim;
         let new_window_x = self.container_x + (self.payload.len() as i32 * window_width);
-        let split = Window::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true);
-        self.focus += 1;
-        self.payload.push(WindowPayload::Window(split));
+        Window::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true)
     }
-    fn split_horizontal(&mut self) {
-        self.with_focused_container(WindowContainer::do_split_horizontal)
-    }
-    fn do_split_horizontal(&mut self) {
-        let window_count = self.payload.len() as i32 + 1;
-        let window_height = self.height / window_count;
-        let rounding_error = self.height % window_height;
-        if window_height < 5 {
-            return;
-        }
-        for (i, window) in self.payload.iter_mut().enumerate() {
-            match window {
-                &mut WindowPayload::Window(ref mut w) => {
-                    w.cursor.set((0, 0));
-                    w.ymax = window_height;
-                    w.y = self.container_y + (i as i32) * window_height;
-                    WindowContainer::reresize_window(&mut *w);
-                }
-                _ => {}
-            }
-        }
+    fn split_horizontal(&mut self) -> Window {
+        let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1));
+        self.refresh_dimensions(dim);
+        let (_, window_height, rounding_error) = dim;
         let new_window_y = self.container_y + (self.payload.len() as i32 * window_height);
-        let split = Window::new_window(self.container_x, new_window_y, (self.width, window_height + rounding_error), self.container_x > 0);
-        self.focus += 1;
-        self.payload.push(WindowPayload::Window(split));
+        Window::new_window(self.container_x, new_window_y, (self.width, window_height + rounding_error), self.container_x > 0)
     }
     fn reresize_window(w: &mut Window) {
         wclear(w.win);
@@ -345,6 +338,33 @@ impl WindowContainer {
         })
     }
     fn on_resize(&mut self) {
+        let mut h = 0;
+        let mut w = 0;
+        getmaxyx(stdscr, &mut h, &mut w);
+        self.height = h;
+        self.width = w;
+        for pl in self.payload.iter_mut() {
+            if pl.is_window() {
+                let mut win = pl.as_window_mut();
+                win.xmax = w;
+                win.ymax = h;
+                WindowContainer::reresize_window(win);
+            }
+        }
+        self.refresh_windows(false);
+    }
+    pub fn wait_for_key(&mut self) -> i32 {
+        let ret = self.with_focused_container(|mut f| {
+            let ret = ncurses::wgetch(f.focused_window().win);
+            if ret == ncurses::KEY_RESIZE {
+                unsafe {
+                    let ref mut rc = *ROOT_CONTAINER.unwrap();
+                    rc.on_resize();
+                }
+            }
+            ret
+        });
+        ret
     }
 }
 
@@ -370,17 +390,6 @@ impl WindowSplitDirection {
             }
         }
     }
-}
-
-pub fn wait_for_key() -> i32 {
-    let ret = ncurses::getch();
-    if ret == ncurses::KEY_RESIZE {
-        unsafe {
-            let ref mut rc = *ROOT_CONTAINER.unwrap();
-            rc.on_resize();
-        }
-    }
-    ret
 }
 
 enum Color {
