@@ -1,8 +1,10 @@
 extern crate ncurses;
+extern crate uuid;
 
 use ncurses::*;
 
 use std::cell::{Cell, RefCell};
+use std::fmt;
 use std::ops::{Deref,DerefMut};
 use std::rc::Rc;
 use std::sync::{Once, ONCE_INIT};
@@ -10,11 +12,20 @@ use std::sync::{Once, ONCE_INIT};
 static INIT: Once = ONCE_INIT;
 static mut ROOT_CONTAINER: Option<*mut WindowContainer> = None;
 
+#[allow(dead_code)]
+fn log<T: Into<String>>(s: T) {
+    use ::std::io::Write;
+    let mut file = ::std::fs::OpenOptions::new().write(true).create(false).append(true).open("out.log").unwrap();
+    let _ = file.write(s.into().as_bytes());
+    let _ = file.write(b"\n");
+}
+
 pub struct Tcwm;
 impl Tcwm {
     pub fn new() -> Result<Tcwm, CursesError> {
         let mut ret = Err(CursesError::CursesAlreadyInitialized);
         INIT.call_once(|| {
+::std::fs::File::create("out.log").unwrap();
             initscr();
             if !has_colors() {
                 panic!("No colors");
@@ -64,9 +75,11 @@ impl Drop for Tcwm {
 }
 
 
-type ContainerRef = Rc<RefCell<WindowContainer>>;
+pub type ContainerRef = Rc<RefCell<WindowContainer>>;
+pub const RESIZE: i32 = ncurses::KEY_RESIZE;
 
 pub struct WindowContainer {
+    id: uuid::Uuid,
     payload: Vec<WindowPayload>,
     direction: WindowSplitDirection,
     container_x: i32,
@@ -76,6 +89,32 @@ pub struct WindowContainer {
     focus: usize,
     root: bool, // TODO: This is an ugly hack
 }
+impl PartialEq for WindowContainer {
+    fn eq(&self, rhs: &WindowContainer) -> bool {
+        self.id == rhs.id
+    }
+}
+impl Eq for WindowContainer {}
+impl fmt::Debug for WindowContainer {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fn format(this: &WindowContainer, fmt: &mut fmt::Formatter, indent: usize) -> fmt::Result {
+            let this_indent = ::std::iter::repeat(" ").take(indent).collect::<String>();
+            let others_indent = ::std::iter::repeat(" ").take(indent+2).collect::<String>();
+            try!(write!(fmt, "{}{}{:?} ({})]\n", this_indent, "[C ", this.direction, this.id));
+            for pl in this.payload.iter() {
+                if pl.is_container() {
+                    let pl = pl.as_container();
+                    try!(format(&*pl.borrow(), fmt, indent + 4));
+                } else {
+                    try!(write!(fmt, "{}{} ({})]\n", others_indent, "[W", pl.as_window().id));
+                };
+            }
+            Ok(())
+        }
+        format(self, fmt, 0)
+    }
+}
+
 #[derive(Copy, Clone, PartialEq)]
 pub enum Direction {
     Up,
@@ -103,6 +142,12 @@ impl WindowPayload {
             _ => panic!("Not a container"),
         }
     }
+    fn as_window(&self) -> &Window {
+        match *self {
+            WindowPayload::Window(ref wr) => wr,
+            _ => panic!("Not a window"),
+        }
+    }
     fn as_window_mut(&mut self) -> &mut Window {
         match *self {
             WindowPayload::Window(ref mut wr) => wr,
@@ -120,6 +165,7 @@ impl WindowContainer {
         let width = win.xmax;
         let height = win.ymax;
         let mut root = WindowContainer {
+            id: uuid::Uuid::new_v4(),
             payload: vec![WindowPayload::Window(win)],
             direction: WindowSplitDirection::Vertical,
             container_x: x,
@@ -149,6 +195,69 @@ impl WindowContainer {
             self.do_focus_change(direction)
         }
     }
+    pub fn delete(&mut self) {
+        log(format!("{:?}", self));
+        if self.id == unsafe { (*ROOT_CONTAINER.unwrap()).id } && self.payload.len() == 1 {
+            // Only window, cannot delete
+            return
+        }
+        let (window_deleted, delete_container) = self.with_focused_container_mut(|f| {
+            let fwid = { f.focused_window().id };
+            let fw_pos = f.payload.iter().position(|w| w.is_window() && w.as_window().id == fwid);
+            match fw_pos {
+                Some(pos) => {
+                    log("deleting window");
+                    f.payload.remove(pos);
+                    if f.focus > 0 {
+                        f.focus -= 1;
+                    }
+                    let delete_container = {
+                        if f.payload.len() == 0 {
+                            log(format!("marking {} to be deleted", f.id));
+                            Some(f.id)
+                        } else {
+                            None
+                        }
+                    };
+                    (true, delete_container)
+                }
+                None => (false, None),
+            }
+        });
+        if delete_container.is_some() {
+            let cont_id = delete_container.unwrap();
+            if let Some(container) = self.find(cont_id) {
+                log(format!("Searching for parent of {} starting from {}", cont_id, self.id));
+                self.with_parent_of(&*container.borrow(), |p| {
+                    log(format!("Parent {} found", p.id));
+                    log(format!("Parent's payload is {}", p.payload.len()));
+                    let pos = p.payload.iter().position(|w| {
+                        if w.is_container() {
+                            let c = w.as_container();
+                            let cid = c.borrow().id;
+                            log(format!("{} == {}", cid, cont_id));
+                            return cid == cont_id
+                        }
+                        false
+                    });
+                    log(format!("{:?}", pos));
+                    if let Some(pos) = pos {
+                        log("deleting container");
+                        p.payload.remove(pos);
+                        if p.focus > 0 {
+                            p.focus -= 1;
+                        }
+                    }
+                });
+            }
+        }
+        if window_deleted {
+            log("window deleted, resizing");
+            //self.on_resize(true, (0,0,0,0));
+            //self.refresh_windows(true);
+            WindowContainer::resize();
+        }
+    }
     fn do_focus_change(&mut self, direction: Direction) -> Result<(), ()> {
         match direction {
             Direction::Left | Direction::Up => {
@@ -173,8 +282,20 @@ impl WindowContainer {
             }
         }
     }
+    fn find(&self, id: uuid::Uuid) -> Option<ContainerRef> {
+        for pl in self.payload.iter() {
+            if pl.is_container() {
+                let cpl = pl.as_container();
+                let pl = cpl.borrow();
+                let plid = pl.id;
+                if plid == id { return Some(cpl.clone()) }
+                else { return pl.find(id) }
+            }
+        }
+        None
+    }
     pub fn print(&mut self, s: &str) {
-        self.with_focused_container(|f| f.focused_window().print(s))
+        self.with_focused_container_mut(|f| f.focused_window_mut().print(s))
     }
     pub fn set_split_direction(&mut self, direction: WindowSplitDirection) {
         if self.payload.len() == 1 {
@@ -198,7 +319,8 @@ impl WindowContainer {
         }
     }
     pub fn split(&mut self) {
-        self.with_focused_container(|f| {
+        log(format!("{:?}", self));
+        self.with_focused_container_mut(|f| {
             let win = match f.direction {
                 WindowSplitDirection::Vertical => f.split_vertical(),
                 WindowSplitDirection::Horizontal => f.split_horizontal(),
@@ -206,9 +328,9 @@ impl WindowContainer {
             f.focus += 1;
             f.payload.push(WindowPayload::Window(win));
         });
-        self.refresh_windows(true);
+        WindowContainer::resize();
     }
-    fn with_focused_container<F, T>(&mut self, f: F) -> T
+    pub fn with_focused_container_mut<F, T>(&mut self, f: F) -> T
         where F: Fn(&mut WindowContainer) -> T
     {
         match self.focused_container() {
@@ -216,7 +338,53 @@ impl WindowContainer {
             None => f(self),
         }
     }
-    fn focused_window(&mut self) -> &mut Window {
+    pub fn with_focused_container<F, T>(&self, f: F) -> T
+        where F: Fn(&WindowContainer) -> T
+    {
+        match self.focused_container() {
+            Some(w) => f(&*w.borrow()),
+            None => f(self),
+        }
+    }
+    fn with_parent_of<F, T>(&self, c: &WindowContainer, f: F) -> T
+        where F: Fn(&mut WindowContainer) -> T
+    {
+        fn find_first_parent(from: &WindowContainer, c: &WindowContainer) -> Option<ContainerRef> {
+            for pl in from.payload.iter().filter(|pl| pl.is_container()).map(|pl| pl.as_container()) {
+                if *c == *pl.borrow() {
+                    return None
+                } else {
+                    find_parent(pl.clone(), c);
+                }
+            }
+            unreachable!();
+        }
+        fn find_parent(from: ContainerRef, c: &WindowContainer) -> Option<ContainerRef> {
+            for pl in from.borrow().payload.iter().filter(|pl| pl.is_container()).map(|pl| pl.as_container()) {
+                if *c == *pl.borrow() {
+                    return Some(from.clone())
+                } else {
+                    find_parent(pl.clone(), c);
+                }
+            }
+            unreachable!();
+        }
+        match find_first_parent(self, c) {
+            Some(parent) => {
+                f(&mut *parent.borrow_mut())
+            }
+            None => {
+                unsafe {
+                    let ref mut rc = *ROOT_CONTAINER.unwrap();
+                    f(rc)
+                }
+            }
+        }
+    }
+    fn focused_window(&self) -> &Window {
+        self.payload[self.focus].as_window()
+    }
+    fn focused_window_mut(&mut self) -> &mut Window {
         self.payload[self.focus].as_window_mut()
     }
     fn focused_container(&self) -> Option<ContainerRef> {
@@ -227,16 +395,15 @@ impl WindowContainer {
                 if c.payload[c.focus].is_container() {
                     c.focused_container()
                 } else {
-                    Some(container.clone())
-                }
+                    Some(container.clone()) }
             },
             &WindowPayload::Window(_) => None
         }
     }
-    fn calculate_dimensions(&self, window_count: Option<i32>) -> (i32, i32, i32) {
+    fn calculate_dimensions(&self, window_count: Option<i32>, direction: Option<WindowSplitDirection>) -> (i32, i32, i32) {
         // TODO: Not sure if this function makes any sense
         let window_count = window_count.unwrap_or(self.payload.len() as i32);
-        let (dim, pos) = match self.direction {
+        let (dim, pos) = match direction.unwrap_or(self.direction) {
             WindowSplitDirection::Horizontal => (self.height, self.container_y),
             WindowSplitDirection::Vertical => (self.width, self.container_x),
         };
@@ -265,14 +432,14 @@ impl WindowContainer {
         }
     }
     fn split_vertical(&mut self) -> Window {
-        let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1));
+        let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1), None);
         self.refresh_dimensions(dim);
         let (_, window_width, rounding_error) = dim;
         let new_window_x = self.container_x + (self.payload.len() as i32 * window_width);
         Window::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true)
     }
     fn split_horizontal(&mut self) -> Window {
-        let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1));
+        let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1), None);
         self.refresh_dimensions(dim);
         let (_, window_height, rounding_error) = dim;
         let new_window_y = self.container_y + (self.payload.len() as i32 * window_height);
@@ -283,6 +450,7 @@ impl WindowContainer {
         if let Some(bwin) = w.border_win {
             wresize(w.win, w.ymax - 1, w.xmax - 1);
             wresize(w.header_win, 1, w.xmax);
+            wresize(bwin, w.ymax - 1, 1);
             mvwin(bwin, w.y, w.x);
             mvwin(w.header_win, w.y + w.ymax - 1, w.x);
             mvwin(w.win, w.y, w.x + 1);
@@ -317,6 +485,7 @@ impl WindowContainer {
                         wrefresh(bwin);
                     }
                     if reprint {
+                        w.cursor.set((0, 0));
                         w.reprint_buffer();
                     } else {
                         wrefresh(w.win);
@@ -331,40 +500,117 @@ impl WindowContainer {
         }
     }
     pub fn set_header(&mut self, header: &str) {
-        self.with_focused_container(|w| {
+        self.with_focused_container_mut(|w| {
             let mut w = w.payload[w.focus].as_window_mut();
             w.header = header.to_owned();
             w.print_header();
         })
     }
-    fn on_resize(&mut self) {
-        let mut h = 0;
-        let mut w = 0;
-        getmaxyx(stdscr, &mut h, &mut w);
-        self.height = h;
-        self.width = w;
-        for pl in self.payload.iter_mut() {
-            if pl.is_window() {
+    fn on_resize(&mut self, first: bool, mut parent: (i32, i32, i32, i32)) {
+        fn window_filter(p: &mut WindowPayload) -> Option<&mut Window> {
+            if p.is_window() {
+                Some(p.as_window_mut())
+            } else {
+                None
+            }
+        }
+        fn container_filter(p: &mut WindowPayload) -> Option<ContainerRef> {
+            if p.is_container() {
+                Some(p.as_container())
+            } else {
+                None
+            }
+        }
+
+        if first {
+            // One more ugly hack
+            let mut h = 0;
+            let mut w = 0;
+            getmaxyx(stdscr, &mut h, &mut w);
+            self.height = h;
+            self.width = w;
+            parent = (self.width, self.height, 0, 0);
+        }
+        let windows_len = self.payload.iter_mut()
+                                      .filter_map(window_filter)
+                                      .size_hint().1.unwrap();
+
+        let containers_len = self.payload.iter_mut()
+                                         .filter_map(container_filter)
+                                         .size_hint().1.unwrap();
+        let (cpos_h, csize_h, crounding_error_h) = self.calculate_dimensions(Some(containers_len as i32), Some(WindowSplitDirection::Horizontal));
+        let (cpos_v, csize_v, crounding_error_v) = self.calculate_dimensions(Some(containers_len as i32), Some(WindowSplitDirection::Vertical));
+        let (wpos_h, wsize_h, wrounding_error_h) = self.calculate_dimensions(Some(windows_len as i32), Some(WindowSplitDirection::Horizontal));
+        let (wpos_v, wsize_v, wrounding_error_v) = self.calculate_dimensions(Some(windows_len as i32), Some(WindowSplitDirection::Vertical));
+
+        for (i, pl) in self.payload.iter_mut().enumerate() {
+            if pl.is_container() {
+                let pl = pl.as_container();
+                let mut container = pl.borrow_mut();
+                match self.direction {
+                    WindowSplitDirection::Horizontal => {
+                        let newh = csize_h + if i == (containers_len - 1) { crounding_error_h } else { 0 };
+                        let newy = cpos_h + (i * csize_h as usize) as i32;
+                        container.container_x = parent.2;
+                        container.width = parent.0;
+                        container.container_y = newy;
+                        container.height = newh;
+                    },
+                    WindowSplitDirection::Vertical => {
+                        let neww = csize_v + if i == (containers_len - 1) { crounding_error_v } else { 0 };
+                        let newx = cpos_v + (i * csize_v as usize) as i32;
+                        container.height = parent.1;
+                        container.container_y = parent.3;
+                        container.container_x = newx;
+                        container.width = neww;
+                    }
+                }
+                let p = (container.width, container.height, container.container_x, container.container_y);
+                container.on_resize(false, p);
+            } else {
                 let mut win = pl.as_window_mut();
-                win.xmax = w;
-                win.ymax = h;
+                match self.direction {
+                    WindowSplitDirection::Horizontal => {
+                        let newy = wpos_h + (i * wsize_h as usize) as i32;
+                        let newymax = wsize_h + if i == (windows_len - 1) { wrounding_error_h } else { 0 };
+                        win.y = newy;
+                        win.ymax = newymax;
+                        win.x = self.container_x;
+                        win.xmax = self.width;
+                    },
+                    WindowSplitDirection::Vertical => {
+                        let newx = wpos_v + (i * wsize_v as usize) as i32;
+                        let newxmax = wsize_v + if i == (windows_len - 1) { wrounding_error_v } else { 0 };
+                        win.x = newx;
+                        win.xmax = newxmax;
+                        win.y = self.container_y;
+                        win.ymax = self.height;
+                    }
+                }
                 WindowContainer::reresize_window(win);
             }
         }
-        self.refresh_windows(false);
     }
-    pub fn wait_for_key(&mut self) -> i32 {
-        let ret = self.with_focused_container(|mut f| {
+    pub fn wait_for_key(&self) -> i32 {
+        let resize_needed = ::std::cell::Cell::new(false);
+        let ret = self.with_focused_container(|f| {
             let ret = ncurses::wgetch(f.focused_window().win);
-            if ret == ncurses::KEY_RESIZE {
-                unsafe {
-                    let ref mut rc = *ROOT_CONTAINER.unwrap();
-                    rc.on_resize();
-                }
+            if ret == RESIZE {
+                resize_needed.set(true);
             }
             ret
         });
+        if resize_needed.get() {
+            WindowContainer::resize();
+        }
         ret
+    }
+    pub fn resize() {
+        unsafe {
+            let ref mut rc = *ROOT_CONTAINER.unwrap();
+            rc.on_resize(true, (0, 0, 0, 0));
+            rc.refresh_windows(true);
+        }
     }
 }
 
@@ -372,7 +618,7 @@ pub enum CursesError {
     CursesAlreadyInitialized,
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum WindowSplitDirection {
     Horizontal,
     Vertical,
@@ -405,6 +651,7 @@ impl Into<i16> for Color {
 }
 
 struct Window {
+    id: uuid::Uuid,
     win: WINDOW,
     border_win: Option<WINDOW>,
     header_win: WINDOW,
@@ -416,6 +663,12 @@ struct Window {
     lines: Vec<String>,
     header: String,
 }
+impl PartialEq for Window {
+    fn eq(&self, rhs: &Window) -> bool {
+        self.id == rhs.id
+    }
+}
+impl Eq for Window {}
 impl Window {
     fn new_window(x: i32, y: i32, dimensions: (i32, i32), border: bool) -> Window {
         let (xmax, ymax) = dimensions;
@@ -423,7 +676,9 @@ impl Window {
         let win = if border { newwin(ymax-1, xmax, y, x+1) } else { newwin(ymax-1, xmax, y, x) };
         let hwin = newwin(1, xmax, y + ymax - 1, x);
         wbkgd(hwin, COLOR_PAIR(Color::StatusSelected.into()));
+        nodelay(win, true);
         Window {
+            id: uuid::Uuid::new_v4(),
             win: win,
             border_win: bwin,
             header_win: hwin,

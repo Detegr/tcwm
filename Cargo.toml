@@ -5,4 +5,5 @@ name = "tcwm"
 version = "0.1.0"
 
 [dependencies]
-ncurses = "5.80.0"
+ncurses = "5.80"
+uuid = { version = "0.2", features = ["v4"] }
