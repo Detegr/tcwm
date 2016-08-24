@@ -127,6 +127,7 @@ pub enum Direction {
     Left,
     Right,
 }
+#[derive(Clone)]
 enum WindowPayload {
     Window(WindowRef),
     Container(ContainerRef),
@@ -237,7 +238,7 @@ impl WindowContainer {
         });
         if delete_container.is_some() {
             let cont_id = delete_container.unwrap();
-            if let Some(container) = self.find(cont_id) {
+            if let Some(WindowPayload::Container(container)) = self.find(cont_id) {
                 log(format!("Searching for parent of {} starting from {}", cont_id, self.id));
                 self.with_parent_of(&*container.borrow(), |p| {
                     log(format!("Parent {} found", p.id));
@@ -293,14 +294,24 @@ impl WindowContainer {
             }
         }
     }
-    fn find(&self, id: Id) -> Option<ContainerRef> {
+    fn find(&self, id: Id) -> Option<WindowPayload> {
         for pl in self.payload.iter() {
-            if pl.is_container() {
-                let cpl = pl.as_container();
-                let pl = cpl.borrow();
-                let plid = pl.id;
-                if plid == id { return Some(cpl.clone()) }
-                else { return pl.find(id) }
+            match pl {
+                &WindowPayload::Container(ref cpl) => {
+                    let cpl = cpl.borrow();
+                    if cpl.id == id {
+                        return Some(pl.clone())
+                    }
+                    else {
+                        return cpl.find(id)
+                    }
+                },
+                &WindowPayload::Window(ref win) => {
+                    let w = win.borrow();
+                    if w.id == id {
+                        return Some(pl.clone())
+                    }
+                }
             }
         }
         None
@@ -342,17 +353,23 @@ impl WindowContainer {
             _ => unreachable!()
         }
     }
-    pub fn split(&mut self) {
+    pub fn split(&mut self) -> WindowRef {
         log(format!("{:?}", self));
-        self.with_focused_container_mut(|f| {
+        let new_win_id = self.with_focused_container_mut(|f| {
             let win = match f.direction {
                 WindowSplitDirection::Vertical => f.split_vertical(),
                 WindowSplitDirection::Horizontal => f.split_horizontal(),
             };
+            let id = win.id;
             f.focus += 1;
             f.payload.push(WindowPayload::Window(Rc::new(RefCell::new(win))));
+            id
         });
         WindowContainer::resize();
+        match self.find(new_win_id) {
+            Some(WindowPayload::Window(wref)) => wref.clone(),
+            _ => panic!("Could not find a window that as just splitted"),
+        }
     }
     pub fn with_focused_container_mut<F, T>(&mut self, f: F) -> T
         where F: Fn(&mut WindowContainer) -> T
