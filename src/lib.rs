@@ -5,7 +5,7 @@ use ncurses::*;
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::ops::{Deref,DerefMut};
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::{Once, ONCE_INIT};
 
@@ -17,7 +17,12 @@ static mut ROOT_CONTAINER: Option<*mut WindowContainer> = None;
 #[allow(dead_code)]
 fn log<T: Into<String>>(s: T) {
     use ::std::io::Write;
-    let mut file = ::std::fs::OpenOptions::new().write(true).create(false).append(true).open("out.log").unwrap();
+    let mut file = ::std::fs::OpenOptions::new()
+        .write(true)
+        .create(false)
+        .append(true)
+        .open("out.log")
+        .unwrap();
     let _ = file.write(s.into().as_bytes());
     let _ = file.write(b"\n");
 }
@@ -27,7 +32,7 @@ impl Tcwm {
     pub fn new() -> Result<Tcwm, CursesError> {
         let mut ret = Err(CursesError::CursesAlreadyInitialized);
         INIT.call_once(|| {
-::std::fs::File::create("out.log").unwrap();
+            ::std::fs::File::create("out.log").unwrap();
             initscr();
             if !has_colors() {
                 panic!("No colors");
@@ -54,16 +59,12 @@ impl Tcwm {
 impl Deref for Tcwm {
     type Target = WindowContainer;
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*ROOT_CONTAINER.unwrap()
-        }
+        unsafe { &*ROOT_CONTAINER.unwrap() }
     }
 }
 impl DerefMut for Tcwm {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {
-            &mut *ROOT_CONTAINER.unwrap()
-        }
+        unsafe { &mut *ROOT_CONTAINER.unwrap() }
     }
 }
 impl Drop for Tcwm {
@@ -102,8 +103,13 @@ impl fmt::Debug for WindowContainer {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fn format(this: &WindowContainer, fmt: &mut fmt::Formatter, indent: usize) -> fmt::Result {
             let this_indent = ::std::iter::repeat(" ").take(indent).collect::<String>();
-            let others_indent = ::std::iter::repeat(" ").take(indent+2).collect::<String>();
-            try!(write!(fmt, "{}{}{:?} ({})]\n", this_indent, "[C ", this.direction, this.id));
+            let others_indent = ::std::iter::repeat(" ").take(indent + 2).collect::<String>();
+            try!(write!(fmt,
+                        "{}{}{:?} ({})]\n",
+                        this_indent,
+                        "[C ",
+                        this.direction,
+                        this.id));
             for pl in this.payload.iter() {
                 if pl.is_container() {
                     let pl = pl.as_container();
@@ -188,10 +194,8 @@ impl WindowContainer {
         if self.payload[self.focus].is_container() {
             let c = self.payload[self.focus].as_container();
             return match c.borrow_mut().change_focus_internal(direction) {
-                Err(_) => {
-                    self.do_focus_change(direction)
-                }
-                Ok(_) => Ok(())
+                Err(_) => self.do_focus_change(direction),
+                Ok(_) => Ok(()),
             };
         } else {
             self.do_focus_change(direction)
@@ -201,7 +205,7 @@ impl WindowContainer {
         log(format!("{:?}", self));
         if self.id == unsafe { (*ROOT_CONTAINER.unwrap()).id } && self.payload.len() == 1 {
             // Only window, cannot delete
-            return
+            return;
         }
         let (window_deleted, delete_container) = self.with_focused_container_mut(|f| {
             let fwid = {
@@ -213,8 +217,10 @@ impl WindowContainer {
                 if w.is_window() {
                     let w = w.as_window();
                     let w = w.borrow();
-                    return w.id == fwid
-                } else { false }
+                    return w.id == fwid;
+                } else {
+                    false
+                }
             });
             match fw_pos {
                 Some(pos) => {
@@ -239,7 +245,9 @@ impl WindowContainer {
         if delete_container.is_some() {
             let cont_id = delete_container.unwrap();
             if let Some(WindowPayload::Container(container)) = self.find(cont_id) {
-                log(format!("Searching for parent of {} starting from {}", cont_id, self.id));
+                log(format!("Searching for parent of {} starting from {}",
+                            cont_id,
+                            self.id));
                 self.with_parent_of(&*container.borrow(), |p| {
                     log(format!("Parent {} found", p.id));
                     log(format!("Parent's payload is {}", p.payload.len()));
@@ -248,7 +256,7 @@ impl WindowContainer {
                             let c = w.as_container();
                             let cid = c.borrow().id;
                             log(format!("{} == {}", cid, cont_id));
-                            return cid == cont_id
+                            return cid == cont_id;
                         }
                         false
                     });
@@ -265,8 +273,8 @@ impl WindowContainer {
         }
         if window_deleted {
             log("window deleted, resizing");
-            //self.on_resize(true, (0,0,0,0));
-            //self.refresh_windows(true);
+            // self.on_resize(true, (0,0,0,0));
+            // self.refresh_windows(true);
             WindowContainer::resize();
         }
     }
@@ -280,7 +288,9 @@ impl WindowContainer {
                         self.focus -= 1;
                         Ok(())
                     }
-                } else { Err(()) }
+                } else {
+                    Err(())
+                }
             }
             Direction::Right | Direction::Down => {
                 if self.direction.direction_ok(direction) {
@@ -290,7 +300,9 @@ impl WindowContainer {
                         self.focus += 1;
                         Ok(())
                     }
-                } else { Err(()) }
+                } else {
+                    Err(())
+                }
             }
         }
     }
@@ -300,16 +312,15 @@ impl WindowContainer {
                 &WindowPayload::Container(ref cpl) => {
                     let cpl = cpl.borrow();
                     if cpl.id == id {
-                        return Some(pl.clone())
+                        return Some(pl.clone());
+                    } else {
+                        return cpl.find(id);
                     }
-                    else {
-                        return cpl.find(id)
-                    }
-                },
+                }
                 &WindowPayload::Window(ref win) => {
                     let w = win.borrow();
                     if w.id == id {
-                        return Some(pl.clone())
+                        return Some(pl.clone());
                     }
                 }
             }
@@ -333,7 +344,7 @@ impl WindowContainer {
     pub fn set_split_direction(&mut self, direction: WindowSplitDirection) {
         if self.payload.len() == 1 {
             self.direction = direction;
-            return
+            return;
         }
         if let WindowPayload::Container(ref container) = self.payload[self.focus] {
             container.borrow_mut().set_split_direction(direction);
@@ -348,9 +359,10 @@ impl WindowContainer {
                 };
                 let mut new = WindowContainer::new_container(x, y, Some(win_payload));
                 new.direction = direction;
-                self.payload.insert(self.focus, WindowPayload::Container(Rc::new(RefCell::new(new))));
+                self.payload.insert(self.focus,
+                                    WindowPayload::Container(Rc::new(RefCell::new(new))));
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
     pub fn split(&mut self) -> WindowRef {
@@ -391,9 +403,12 @@ impl WindowContainer {
         where F: Fn(&mut WindowContainer) -> T
     {
         fn find_first_parent(from: &WindowContainer, c: &WindowContainer) -> Option<ContainerRef> {
-            for pl in from.payload.iter().filter(|pl| pl.is_container()).map(|pl| pl.as_container()) {
+            for pl in from.payload
+                .iter()
+                .filter(|pl| pl.is_container())
+                .map(|pl| pl.as_container()) {
                 if *c == *pl.borrow() {
-                    return None
+                    return None;
                 } else {
                     find_parent(pl.clone(), c);
                 }
@@ -401,9 +416,13 @@ impl WindowContainer {
             unreachable!();
         }
         fn find_parent(from: ContainerRef, c: &WindowContainer) -> Option<ContainerRef> {
-            for pl in from.borrow().payload.iter().filter(|pl| pl.is_container()).map(|pl| pl.as_container()) {
+            for pl in from.borrow()
+                .payload
+                .iter()
+                .filter(|pl| pl.is_container())
+                .map(|pl| pl.as_container()) {
                 if *c == *pl.borrow() {
-                    return Some(from.clone())
+                    return Some(from.clone());
                 } else {
                     find_parent(pl.clone(), c);
                 }
@@ -411,15 +430,11 @@ impl WindowContainer {
             unreachable!();
         }
         match find_first_parent(self, c) {
-            Some(parent) => {
-                f(&mut *parent.borrow_mut())
-            }
-            None => {
-                unsafe {
-                    let ref mut rc = *ROOT_CONTAINER.unwrap();
-                    f(rc)
-                }
-            }
+            Some(parent) => f(&mut *parent.borrow_mut()),
+            None => unsafe {
+                let ref mut rc = *ROOT_CONTAINER.unwrap();
+                f(rc)
+            },
         }
     }
     fn focused_window(&self) -> WindowRef {
@@ -433,12 +448,16 @@ impl WindowContainer {
                 if c.payload[c.focus].is_container() {
                     c.focused_container()
                 } else {
-                    Some(container.clone()) }
-            },
-            &WindowPayload::Window(_) => None
+                    Some(container.clone())
+                }
+            }
+            &WindowPayload::Window(_) => None,
         }
     }
-    fn calculate_dimensions(&self, window_count: Option<i32>, direction: Option<WindowSplitDirection>) -> (i32, i32, i32) {
+    fn calculate_dimensions(&self,
+                            window_count: Option<i32>,
+                            direction: Option<WindowSplitDirection>)
+                            -> (i32, i32, i32) {
         // TODO: Not sure if this function makes any sense
         let window_count = window_count.unwrap_or(self.payload.len() as i32);
         let (dim, pos) = match direction.unwrap_or(self.direction) {
@@ -477,14 +496,20 @@ impl WindowContainer {
         self.refresh_dimensions(dim);
         let (_, window_width, rounding_error) = dim;
         let new_window_x = self.container_x + (self.payload.len() as i32 * window_width);
-        Window::new_window(new_window_x, self.container_y, (window_width + rounding_error, self.height), true)
+        Window::new_window(new_window_x,
+                           self.container_y,
+                           (window_width + rounding_error, self.height),
+                           true)
     }
     fn split_horizontal(&mut self) -> Window {
         let dim = self.calculate_dimensions(Some(self.payload.len() as i32 + 1), None);
         self.refresh_dimensions(dim);
         let (_, window_height, rounding_error) = dim;
         let new_window_y = self.container_y + (self.payload.len() as i32 * window_height);
-        Window::new_window(self.container_x, new_window_y, (self.width, window_height + rounding_error), self.container_x > 0)
+        Window::new_window(self.container_x,
+                           new_window_y,
+                           (self.width, window_height + rounding_error),
+                           self.container_x > 0)
     }
     fn reresize_window(w: &mut Window) {
         wclear(w.win);
@@ -512,14 +537,24 @@ impl WindowContainer {
                     let mut w = w.borrow_mut();
                     let header_color = {
                         let focused = in_focus_chain && self.focus == i;
-                        let color = if focused { Color::StatusSelected } else { Color::Status };
+                        let color = if focused {
+                            Color::StatusSelected
+                        } else {
+                            Color::Status
+                        };
                         COLOR_PAIR(color.into())
                     };
                     wbkgd(w.header_win, header_color);
                     if self.root {
-                        w.header = format!("Window {} ({}, {}) ({}, {})", i, w.x, w.y, w.xmax, w.ymax);
+                        w.header =
+                            format!("Window {} ({}, {}) ({}, {})", i, w.x, w.y, w.xmax, w.ymax);
                     } else {
-                        w.header = format!("Container {} ({}, {}) ({}, {})", i, w.x, w.y, w.xmax, w.ymax);
+                        w.header = format!("Container {} ({}, {}) ({}, {})",
+                                           i,
+                                           w.x,
+                                           w.y,
+                                           w.xmax,
+                                           w.ymax);
                     }
                     w.print_header();
                     if let Some(bwin) = w.border_win {
@@ -574,17 +609,31 @@ impl WindowContainer {
             self.width = w;
             parent = (self.width, self.height, 0, 0);
         }
-        let windows_len = self.payload.iter_mut()
-                                      .filter_map(window_filter)
-                                      .size_hint().1.unwrap();
+        let windows_len = self.payload
+            .iter_mut()
+            .filter_map(window_filter)
+            .size_hint()
+            .1
+            .unwrap();
 
-        let containers_len = self.payload.iter_mut()
-                                         .filter_map(container_filter)
-                                         .size_hint().1.unwrap();
-        let (cpos_h, csize_h, crounding_error_h) = self.calculate_dimensions(Some(containers_len as i32), Some(WindowSplitDirection::Horizontal));
-        let (cpos_v, csize_v, crounding_error_v) = self.calculate_dimensions(Some(containers_len as i32), Some(WindowSplitDirection::Vertical));
-        let (wpos_h, wsize_h, wrounding_error_h) = self.calculate_dimensions(Some(windows_len as i32), Some(WindowSplitDirection::Horizontal));
-        let (wpos_v, wsize_v, wrounding_error_v) = self.calculate_dimensions(Some(windows_len as i32), Some(WindowSplitDirection::Vertical));
+        let containers_len = self.payload
+            .iter_mut()
+            .filter_map(container_filter)
+            .size_hint()
+            .1
+            .unwrap();
+        let (cpos_h, csize_h, crounding_error_h) =
+            self.calculate_dimensions(Some(containers_len as i32),
+                                      Some(WindowSplitDirection::Horizontal));
+        let (cpos_v, csize_v, crounding_error_v) =
+            self.calculate_dimensions(Some(containers_len as i32),
+                                      Some(WindowSplitDirection::Vertical));
+        let (wpos_h, wsize_h, wrounding_error_h) =
+            self.calculate_dimensions(Some(windows_len as i32),
+                                      Some(WindowSplitDirection::Horizontal));
+        let (wpos_v, wsize_v, wrounding_error_v) =
+            self.calculate_dimensions(Some(windows_len as i32),
+                                      Some(WindowSplitDirection::Vertical));
 
         for (i, pl) in self.payload.iter_mut().enumerate() {
             if pl.is_container() {
@@ -592,15 +641,25 @@ impl WindowContainer {
                 let mut container = pl.borrow_mut();
                 match self.direction {
                     WindowSplitDirection::Horizontal => {
-                        let newh = csize_h + if i == (containers_len - 1) { crounding_error_h } else { 0 };
+                        let newh = csize_h +
+                                   if i == (containers_len - 1) {
+                            crounding_error_h
+                        } else {
+                            0
+                        };
                         let newy = cpos_h + (i * csize_h as usize) as i32;
                         container.container_x = parent.2;
                         container.width = parent.0;
                         container.container_y = newy;
                         container.height = newh;
-                    },
+                    }
                     WindowSplitDirection::Vertical => {
-                        let neww = csize_v + if i == (containers_len - 1) { crounding_error_v } else { 0 };
+                        let neww = csize_v +
+                                   if i == (containers_len - 1) {
+                            crounding_error_v
+                        } else {
+                            0
+                        };
                         let newx = cpos_v + (i * csize_v as usize) as i32;
                         container.height = parent.1;
                         container.container_y = parent.3;
@@ -608,7 +667,10 @@ impl WindowContainer {
                         container.width = neww;
                     }
                 }
-                let p = (container.width, container.height, container.container_x, container.container_y);
+                let p = (container.width,
+                         container.height,
+                         container.container_x,
+                         container.container_y);
                 container.on_resize(false, p);
             } else {
                 let win = pl.as_window();
@@ -616,15 +678,25 @@ impl WindowContainer {
                 match self.direction {
                     WindowSplitDirection::Horizontal => {
                         let newy = wpos_h + (i * wsize_h as usize) as i32;
-                        let newymax = wsize_h + if i == (windows_len - 1) { wrounding_error_h } else { 0 };
+                        let newymax = wsize_h +
+                                      if i == (windows_len - 1) {
+                            wrounding_error_h
+                        } else {
+                            0
+                        };
                         win.y = newy;
                         win.ymax = newymax;
                         win.x = self.container_x;
                         win.xmax = self.width;
-                    },
+                    }
                     WindowSplitDirection::Vertical => {
                         let newx = wpos_v + (i * wsize_v as usize) as i32;
-                        let newxmax = wsize_v + if i == (windows_len - 1) { wrounding_error_v } else { 0 };
+                        let newxmax = wsize_v +
+                                      if i == (windows_len - 1) {
+                            wrounding_error_v
+                        } else {
+                            0
+                        };
                         win.x = newx;
                         win.xmax = newxmax;
                         win.y = self.container_y;
@@ -671,14 +743,8 @@ pub enum WindowSplitDirection {
 impl WindowSplitDirection {
     fn direction_ok(&self, dir: Direction) -> bool {
         match *self {
-            WindowSplitDirection::Vertical => {
-                dir == Direction::Left
-                || dir == Direction::Right
-            }
-            WindowSplitDirection::Horizontal => {
-                dir == Direction::Up
-                || dir == Direction::Down
-            }
+            WindowSplitDirection::Vertical => dir == Direction::Left || dir == Direction::Right,
+            WindowSplitDirection::Horizontal => dir == Direction::Up || dir == Direction::Down,
         }
     }
 }
@@ -717,8 +783,16 @@ impl Eq for Window {}
 impl Window {
     fn new_window(x: i32, y: i32, dimensions: (i32, i32), border: bool) -> Window {
         let (xmax, ymax) = dimensions;
-        let bwin = if border { Some(newwin(ymax, 1, y, x)) } else { None };
-        let win = if border { newwin(ymax-1, xmax, y, x+1) } else { newwin(ymax-1, xmax, y, x) };
+        let bwin = if border {
+            Some(newwin(ymax, 1, y, x))
+        } else {
+            None
+        };
+        let win = if border {
+            newwin(ymax - 1, xmax, y, x + 1)
+        } else {
+            newwin(ymax - 1, xmax, y, x)
+        };
         let hwin = newwin(1, xmax, y + ymax - 1, x);
         wbkgd(hwin, COLOR_PAIR(Color::StatusSelected.into()));
         nodelay(win, true);
@@ -749,7 +823,11 @@ impl Window {
         wrefresh(self.win);
     }
     fn print_header(&mut self) {
-        let margin = if self.border_win.is_some() { 2 } else { 1 };
+        let margin = if self.border_win.is_some() {
+            2
+        } else {
+            1
+        };
         mvwprintw(self.header_win, 0, margin, &self.header[..]);
         wrefresh(self.header_win);
     }
