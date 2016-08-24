@@ -297,6 +297,9 @@ impl WindowContainer {
     pub fn print(&mut self, s: &str) {
         self.with_focused_container_mut(|f| f.focused_window_mut().print(s))
     }
+    pub fn print_overwriting(&mut self, s: &str) {
+        self.with_focused_container_mut(|f| f.focused_window_mut().print_overwriting(s))
+    }
     pub fn set_split_direction(&mut self, direction: WindowSplitDirection) {
         if self.payload.len() == 1 {
             self.direction = direction;
@@ -720,6 +723,19 @@ impl Window {
     }
     pub fn print(&mut self, s: &str) {
         self.print_internal(s);
+        self.lines.push(s.into());
+        wrefresh(self.win);
+    }
+    pub fn print_overwriting(&mut self, s: &str) {
+        let (_, y) = self.cursor.get();
+        self.cursor.set((0, y));
+        wmove(self.win, y, 0);
+        wclrtoeol(self.win);
+
+        // TODO: Scroll?
+        wprintw(self.win, s);
+
+        self.lines.pop();
         self.lines.push(s.into());
         wrefresh(self.win);
     }
