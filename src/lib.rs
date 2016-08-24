@@ -9,6 +9,8 @@ use std::ops::{Deref,DerefMut};
 use std::rc::Rc;
 use std::sync::{Once, ONCE_INIT};
 
+pub type Id = uuid::Uuid;
+
 static INIT: Once = ONCE_INIT;
 static mut ROOT_CONTAINER: Option<*mut WindowContainer> = None;
 
@@ -79,7 +81,7 @@ pub type ContainerRef = Rc<RefCell<WindowContainer>>;
 pub const RESIZE: i32 = ncurses::KEY_RESIZE;
 
 pub struct WindowContainer {
-    id: uuid::Uuid,
+    id: Id,
     payload: Vec<WindowPayload>,
     direction: WindowSplitDirection,
     container_x: i32,
@@ -282,7 +284,7 @@ impl WindowContainer {
             }
         }
     }
-    fn find(&self, id: uuid::Uuid) -> Option<ContainerRef> {
+    fn find(&self, id: Id) -> Option<ContainerRef> {
         for pl in self.payload.iter() {
             if pl.is_container() {
                 let cpl = pl.as_container();
@@ -654,7 +656,7 @@ impl Into<i16> for Color {
 }
 
 struct Window {
-    id: uuid::Uuid,
+    id: Id,
     win: WINDOW,
     border_win: Option<WINDOW>,
     header_win: WINDOW,
